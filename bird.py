@@ -42,48 +42,39 @@ class BIRDTarget(BIRD, Target):
 
     CONTAINER_NAME = 'bgperf_bird_target'
     CONFIG_FILE_NAME = 'bird.conf'
-    DYNAMIC_NEIGHBORS = True
+    DYNAMIC_NEIGHBORS = False
 
     def write_config(self):
         config = '''router id {0};
 protocol device {{ }}
 protocol direct {{ disabled; }}
 protocol kernel {{ ipv4 {{ import none; export none; }}; }}
-'''.format(self.conf['router-id'], ' sorted' if self.conf['single-table'] else '')
-
-        def gen_filter_assignment(n):
-            if 'filter' in n:
-                c = []
-                if 'in' not in n['filter'] or len(n['filter']['in']) == 0:
-                    c.append('import all;')
-                else:
-                    c.append('import where {0};'.format( '&&'.join(x + '()' for x in n['filter']['in'])))
-
-                if 'out' not in n['filter'] or len(n['filter']['out']) == 0:
-                    c.append('export all;')
-                else:
-                    c.append('export where {0};'.format( '&&'.join(x + '()' for x in n['filter']['out'])))
-
-                return '\n'.join(c)
-            return '''import all;
-export all;
-'''
+'''.format(self.conf['router-id'])
 
         def gen_neighbor_config(n):
-            return ('''ipv4 table table_{0};
-protocol pipe pipe_{0} {{
-    table master4;
-    peer table table_{0};
-}}
-'''.format(n['as']) if not self.conf['single-table'] else '') + '''protocol bgp bgp_{0} {{
-    local as {1};
-    neighbor {2} as {0};
+            table_name = f'''table_{n['as']}'''
 
-    ipv4 {{ import all; export all; }};
+            pipe = "" if self.conf['single-table'] else f'''ipv4 table {table_name};
+protocol pipe pipe_{n['as']} {{
+    table master4;
+    peer table {table_name};
+    import filter pf;
+    export all;
+}}
+'''
+
+            bgp = f'''protocol bgp bgp_{n['as']} {{
+    local as {self.conf['as']};
+    neighbor {n['local-address']} as {n['as']};
+    ipv4 {{
+        import {"filter pf" if self.conf['single-table'] else "all"};
+        export all;
+        {"" if self.conf['single-table'] else ("table " + table_name + ";")}
+    }};
     rs client;
 }}
-'''.format(n['as'], self.conf['as'], n['local-address'], 'secondary' if self.conf['single-table'] else '')
-            return n1 + n2
+'''
+            return pipe + bgp
 
         def gen_prefix_filter(name, match):
             return '''function {0}()
@@ -141,6 +132,7 @@ return true;
         with open('{0}/{1}'.format(self.host_dir, self.CONFIG_FILE_NAME), 'w') as f:
             f.write(config)
 
+            pf = []
             if 'policy' in self.scenario_global_conf:
                 for k, v in self.scenario_global_conf['policy'].items():
                     match_info = []
@@ -156,27 +148,16 @@ return true;
                             f.write(gen_ext_community_filter(n, match))
                         match_info.append((match['type'], n))
                     f.write(gen_filter(k, match_info))
-            if self.DYNAMIC_NEIGHBORS:
-                config = self.get_dynamic_neighbor_config()
-                f.write(config)
-                f.flush()
+                    pf.append(k)
+            f.write('filter pf {')
+            for xf in pf:
+                f.write(f' if ! {xf}() then reject;')
+            f.write('accept; };')
 
-            else:
-                for n in sorted(list(flatten(list(t.get('neighbors', {}).values()) for t in self.scenario_global_conf['testers'])) + [self.scenario_global_conf['monitor']], key=lambda n: n['as']):
-                    f.write(gen_neighbor_config(n))
+            for n in sorted(list(flatten(list(t.get('neighbors', {}).values()) for t in self.scenario_global_conf['testers'])) + [self.scenario_global_conf['monitor']], key=lambda n: n['as']):
+                f.write(gen_neighbor_config(n))
 
             
-    def get_dynamic_neighbor_config(self):
-        config = '''protocol bgp everything {{
-    local as {};
-    neighbor range 10.0.0.0/8 external;
-    hold time 90;
-    ipv4 {{import all; export all; }};
-}}
-'''.format(self.conf['as'])
-
-        return config
-
     def get_startup_cmd(self):
         return '\n'.join(
             ['#!/bin/bash',
