@@ -69,8 +69,11 @@ gobgpd -t yaml -f {1}/{2} -l {3} > {1}/gobgpd.log 2>&1
                  rm_line()
             print(f"Waiting {n} seconds for monitor")
 
-
-            neigh = json.loads(self.local('gobgp neighbor {0} -j'.format(neighbor)).decode('utf-8'))
+            try:
+                neigh = json.loads(self.local('gobgp neighbor {0} -j'.format(neighbor)).decode('utf-8'))
+            except Exception as e:
+                print(f"Monitor reading exception: {e}")
+                continue
 
             if ((neigh['state']['session_state'] == 'established') or
                 (neigh['state']['session_state'] == 6)):
@@ -89,7 +92,11 @@ gobgpd -t yaml -f {1}/{2} -l {3} > {1}/gobgpd.log 2>&1
                 if self.stop_monitoring:
                     return
 
-                info = json.loads(self.local('gobgp neighbor -j').decode('utf-8'))[0]
+                try:
+                    info = json.loads(self.local('gobgp neighbor -j').decode('utf-8'))[0]
+                except Exception as e:
+                    print(f"Monitor reading exception: {e}")
+                    continue
 
                 info['who'] = self.name
                 state = info['afi_safis'][0]['state']
