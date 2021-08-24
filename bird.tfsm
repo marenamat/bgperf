@@ -5,4 +5,4 @@ Start
   ^\s+BGP state:.*$$ -> Record
   ^.*Pipe -> Record 
   ^\s+Neighbor address:\s+${neighbor}
-  ^\s+Import updates:\s+\S+\s+\S+\s+\S+\s+\S+\s+${accepted}
+  ^\s+Import updates:(\s+\S+)*\s+${accepted}$$
